@@ -1,0 +1,91 @@
+# Chapter 18: RabbitMQ in depth, with a 3-node cluster
+#
+# No port is published on your machine.
+
+name: messaging-ch18
+
+# The three nodes use the same configuration and the same Erlang cookie: that is what
+# lets them recognize each other as a cluster.
+x-rabbit: &rabbit
+  image: rabbitmq:4.3.7-management
+  environment: &rabbit-environment
+    RABBITMQ_SERVER_ADDITIONAL_ERL_ARGS: -setcookie pedido-certo-cluster
+    RABBITMQ_CTL_ERL_ARGS: -setcookie pedido-certo-cluster
+  volumes:
+    - ./rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/90-cluster.conf:ro
+  healthcheck:
+    test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+    interval: 5s
+    retries: 30
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch18-node
+  init: true
+  depends_on:
+    rabbit1:
+      condition: service_healthy
+    rabbit2:
+      condition: service_healthy
+    rabbit3:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+x-environment: &environment
+  # The client knows the three nodes and tries the next one when the connection drops
+  RABBITMQ_NODES: rabbit1,rabbit2,rabbit3
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+
+services:
+  rabbit1:
+    <<: *rabbit
+    hostname: rabbit1
+  rabbit2:
+    <<: *rabbit
+    hostname: rabbit2
+  rabbit3:
+    <<: *rabbit
+    hostname: rabbit3
+
+  # Stores what the broker confirmed and what reached the consumer
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Publishes orders nonstop, with publisher confirms, and records each confirmation.
+  # Starts with `docker compose --profile load up -d`
+  publisher:
+    <<: *service
+    profiles: ["load"]
+    environment:
+      <<: *environment
+      SERVICE: publisher
+
+  # Consumes the inventory queue (a quorum queue) and records each delivery
+  consumer:
+    <<: *service
+    profiles: ["load"]
+    environment:
+      <<: *environment
+      SERVICE: consumer
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch18-tools
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto

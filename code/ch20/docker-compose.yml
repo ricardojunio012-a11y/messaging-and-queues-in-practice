@@ -1,0 +1,97 @@
+# Chapter 20: Apache Kafka in depth, with 3 brokers and one KRaft controller
+#
+# The producer configuration is chosen in the .env file.
+# No port is published on your machine.
+
+name: messaging-ch20
+
+x-kafka: &kafka
+  image: apache/kafka:4.3.2
+  environment: &kafka-env
+    CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    KAFKA_CONTROLLER_QUORUM_VOTERS: 100@controller:9093
+    KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+    KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+    KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+    KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+    KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+    KAFKA_HEAP_OPTS: -Xms256m -Xmx384m
+
+services:
+  # The controller keeps the cluster metadata (leaders, ISR) with Raft. In production
+  # there would be 3 controllers; here one is enough, and the lab never stops it.
+  controller:
+    <<: *kafka
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 100
+      KAFKA_PROCESS_ROLES: controller
+      KAFKA_LISTENERS: CONTROLLER://:9093
+
+  broker1: &broker
+    <<: *kafka
+    hostname: broker1
+    depends_on: [controller]
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker1:9092
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      retries: 30
+  broker2:
+    <<: *broker
+    hostname: broker2
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker2:9092
+  broker3:
+    <<: *broker
+    hostname: broker3
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_PROCESS_ROLES: broker
+      KAFKA_LISTENERS: PLAINTEXT://:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://broker3:9092
+
+  # Publishes N payments to TOPIC with the ACKS setting and exits:
+  # `docker compose run --rm producer`
+  producer:
+    build: ./node
+    image: pedido-certo/ch20-node
+    profiles: ["tools"]
+    environment:
+      SERVICE: producer
+      KAFKA_BROKERS: broker1:9092,broker2:9092,broker3:9092
+      TOPIC: ${TOPIC:-payments-risky}
+      ACKS: ${ACKS:-1}
+      N: ${N:-1000}
+
+  # Reconciles the payments of CONSUME_TOPIC in the "reconciliation" group,
+  # PROCESSING_MS per payment: `docker compose up -d consumer` (or --scale consumer=2)
+  consumer:
+    build: ./node
+    image: pedido-certo/ch20-node
+    profiles: ["consume"]
+    init: true
+    environment:
+      SERVICE: consumer
+      KAFKA_BROKERS: broker1:9092,broker2:9092,broker3:9092
+      TOPIC: ${CONSUME_TOPIC:-payments-safe}
+      PROCESSING_MS: ${PROCESSING_MS:-200}
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch20-tools
+    profiles: ["tools"]

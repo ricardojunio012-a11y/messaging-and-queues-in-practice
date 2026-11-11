@@ -1,0 +1,104 @@
+# Chapter 16: Claim Check and delayed messages, with RabbitMQ, S3 (LocalStack) and
+# PostgreSQL
+#
+# The Claim Check is chosen in the .env file.
+# After changing .env, run `docker compose up -d` again.
+# No port is published on your machine.
+
+name: messaging-ch16
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch16-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    localstack:
+      condition: service_healthy
+
+x-environment: &environment
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+  S3_ENDPOINT: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+
+services:
+  # The message size limit was lowered to 1 MiB (see rabbitmq/limit.conf)
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    hostname: rabbitmq
+    volumes:
+      - ./rabbitmq/limit.conf:/etc/rabbitmq/conf.d/90-limit.conf:ro
+    healthcheck:
+      # Tests the AMQP port (see the comment in the chapter 3 lab)
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  # Local S3. The version is pinned at 4.14.0: versions from 2026.03 on require an
+  # access token (free for personal use) to start.
+  localstack:
+    image: localstack/localstack:4.14.0
+    environment:
+      SERVICES: s3
+    volumes:
+      - ./localstack/create-bucket.sh:/etc/localstack/init/ready.d/create-bucket.sh:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "awslocal s3 ls s3://invoices"]
+      interval: 3s
+      retries: 40
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Issues the invoice (a 5 MB PDF) and publishes the event for sending by email
+  invoice-issuer:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: invoice-issuer
+      PORT: 8080
+      CLAIM_CHECK: ${CLAIM_CHECK:-no}
+
+  # Consumes the event and "sends" the invoice: downloads the PDF from S3 and checks
+  # the hash
+  invoice-sender:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: invoice-sender
+
+  # Abandoned-cart reminder: the message waits in a queue with a TTL and only arrives
+  # after REMINDER_S seconds
+  reminders:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: reminders
+      REMINDER_S: ${REMINDER_S:-30}
+
+  # Lab tool: `docker compose run --rm load <command>`
+  load:
+    build: ./load
+    image: pedido-certo/ch16-load
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto

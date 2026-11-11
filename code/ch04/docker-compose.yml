@@ -1,0 +1,70 @@
+# Chapter 4: delivery guarantees with RabbitMQ
+#
+# The behavior of the producer and the consumer is chosen in the .env file.
+# After changing .env, run `docker compose up -d --build` again.
+# No port is published on your machine.
+
+name: messaging-ch04
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch04-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+
+x-env: &env
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    # Fixed name: RabbitMQ stores its data by node name, which depends on the hostname
+    hostname: rabbitmq
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      # Tests the AMQP port (see the comment in the chapter 3 lab)
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  # Producer: publishes one SendConfirmationEmail command per order
+  orders-api:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE: orders-api
+      PORT: 8080
+      CONFIRMATION: ${CONFIRMATION:-yes}
+      PERSISTENT: ${PERSISTENT:-yes}
+
+  # Consumer: "sends" the email and acknowledges the message
+  notifications:
+    <<: *service
+    # If the process dies, Docker restarts it (as an orchestrator would)
+    restart: on-failure
+    volumes:
+      - counter:/counter
+    environment:
+      <<: *env
+      SERVICE: notifications
+      ACK_MODE: ${ACK_MODE:-after}
+      FAIL_ON_MESSAGE: ${FAIL_ON_MESSAGE:-0}
+      LATENCY_MS: ${LATENCY_MS:-200}
+
+  # Lab tool: `docker compose run --rm load`
+  load:
+    build: ./load
+    image: pedido-certo/ch04-load
+    profiles: ["tools"]
+    volumes:
+      - counter:/counter
+    environment:
+      N: ${N:-20}
+      C: ${C:-5}
+
+volumes:
+  rabbitmq:
+  counter:

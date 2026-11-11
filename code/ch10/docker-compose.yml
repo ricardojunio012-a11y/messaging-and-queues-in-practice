@@ -1,0 +1,87 @@
+# Chapter 10: observability in asynchronous systems
+#
+# RabbitMQ, Jaeger (traces) and Prometheus (metrics and alerts), with orders-api
+# and two consumers instrumented with OpenTelemetry.
+# After changing .env, run `docker compose up -d --build` again.
+#
+# Two user interfaces are opened on your computer (only on 127.0.0.1):
+#   Jaeger:     http://localhost:16686
+#   Prometheus: http://localhost:9090
+# If the ports are busy, change JAEGER_PORT and PROMETHEUS_PORT in .env.
+
+name: messaging-ch10
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch10-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    jaeger:
+      condition: service_started
+
+x-environment: &environment
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  # Where the spans are sent (OTLP over HTTP)
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4318
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    hostname: rabbitmq
+    healthcheck:
+      # Tests the AMQP port (see the comment in the chapter 3 lab)
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  # Receives the spans over OTLP and shows the traces
+  jaeger:
+    image: jaegertracing/jaeger:2.11.0
+    ports:
+      - "127.0.0.1:${JAEGER_PORT:-16686}:16686"
+
+  # Collects RabbitMQ's metrics and evaluates the alert rules
+  prometheus:
+    image: prom/prometheus:v3.7.3
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+    ports:
+      - "127.0.0.1:${PROMETHEUS_PORT:-9090}:9090"
+
+  # Producer: receives POST /orders and publishes OrderCreated to the "orders" exchange
+  orders-api:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: orders-api
+      OTEL_SERVICE_NAME: orders-api
+      PORT: 8080
+
+  # Fast consumer: sends the confirmation email
+  notifications:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: consumer
+      OTEL_SERVICE_NAME: notifications
+      NAME: notifications
+      LATENCY_MS: ${NOTIFICATIONS_LATENCY_MS:-50}
+
+  # Slow consumer: computes the loyalty points
+  loyalty:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: consumer
+      OTEL_SERVICE_NAME: loyalty
+      NAME: loyalty
+      LATENCY_MS: ${LOYALTY_LATENCY_MS:-1500}
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch10-tools
+    profiles: ["tools"]

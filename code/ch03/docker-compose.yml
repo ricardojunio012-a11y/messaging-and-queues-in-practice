@@ -1,0 +1,144 @@
+# Chapter 3: queue, pub/sub, log and request/reply with RabbitMQ and Kafka
+#
+# The lab settings are in the .env file. After changing .env,
+# run `docker compose up -d --build` again.
+# No port is published on your machine: the lab tools run
+# inside the same network as the services.
+
+name: messaging-ch03
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch03-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    kafka-init:
+      condition: service_completed_successfully
+
+x-env: &env
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  KAFKA_BROKERS: kafka:9092
+
+x-consumer: &consumer
+  <<: *service
+  volumes:
+    - counter:/counter
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    healthcheck:
+      # Tests the AMQP port. Avoid "rabbitmq-diagnostics" here: run as root
+      # before RabbitMQ finishes starting, it creates the .erlang.cookie file with
+      # the wrong owner, and RabbitMQ can no longer start.
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  # Kafka in KRaft mode with a single node (broker and controller in the same process)
+  kafka:
+    image: apache/kafka:4.3.2
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      # Checks retention every 10 s (the default is 5 min), so that step 7 fits in the lab
+      KAFKA_LOG_RETENTION_CHECK_INTERVAL_MS: 10000
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      retries: 30
+
+  # Creates the "orders" topic with 3 partitions and exits
+  kafka-init:
+    image: apache/kafka:4.3.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create
+      --if-not-exists --topic orders --partitions 3 --replication-factor 1
+
+  # Producer of OrderCreated and client of the shipping request/reply
+  orders-api:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE: orders-api
+      PORT: 8080
+      SHIPPING_TIMEOUT_MS: ${SHIPPING_TIMEOUT_MS:-2000}
+
+  # Answers the shipping quotes (request/reply)
+  shipping:
+    <<: *service
+    environment:
+      <<: *env
+      SERVICE: shipping
+      LATENCY_MS: ${SHIPPING_LATENCY_MS:-50}
+
+  # Subscribers of OrderCreated on RabbitMQ (pub/sub with one queue per subscriber)
+  notifications-rabbitmq:
+    <<: *consumer
+    environment: { <<: *env, SERVICE: consumer, BROKER: rabbitmq, NAME: notifications }
+  loyalty-rabbitmq:
+    <<: *consumer
+    environment: { <<: *env, SERVICE: consumer, BROKER: rabbitmq, NAME: loyalty }
+
+  # Consumer groups of OrderCreated on Kafka (log)
+  notifications-kafka:
+    <<: *consumer
+    environment: { <<: *env, SERVICE: consumer, BROKER: kafka, NAME: notifications }
+  loyalty-kafka:
+    <<: *consumer
+    environment: { <<: *env, SERVICE: consumer, BROKER: kafka, NAME: loyalty }
+
+  # Subscribers that arrive later: `docker compose --profile late up -d`
+  analytics-rabbitmq:
+    <<: *consumer
+    profiles: ["late"]
+    environment: { <<: *env, SERVICE: consumer, BROKER: rabbitmq, NAME: analytics }
+  analytics-kafka:
+    <<: *consumer
+    profiles: ["late"]
+    environment: { <<: *env, SERVICE: consumer, BROKER: kafka, NAME: analytics }
+
+  # Shows the Kafka consumer groups: `docker compose run --rm groups`
+  groups:
+    image: apache/kafka:4.3.2
+    profiles: ["tools"]
+    entrypoint: ["/opt/kafka/bin/kafka-consumer-groups.sh", "--bootstrap-server", "kafka:9092",
+                 "--describe"]
+    command: ["--all-groups"]
+
+  # Shows or changes the configuration of the "orders" topic:
+  # `docker compose run --rm topics` (or `topics --alter --add-config ...`)
+  topics:
+    image: apache/kafka:4.3.2
+    profiles: ["tools"]
+    entrypoint: ["/opt/kafka/bin/kafka-configs.sh", "--bootstrap-server", "kafka:9092",
+                 "--entity-type", "topics", "--entity-name", "orders"]
+    command: ["--describe"]
+
+  # Lab tool: `docker compose run --rm load`
+  load:
+    build: ./load
+    image: pedido-certo/ch03-load
+    profiles: ["tools"]
+    volumes:
+      - counter:/counter
+    environment:
+      N: ${N:-10}
+      C: ${C:-5}
+
+volumes:
+  counter:

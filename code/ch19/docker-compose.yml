@@ -1,0 +1,94 @@
+# Chapter 19: Amazon SQS and SNS, emulated by LocalStack
+#
+# The behavior of the consumers is chosen in the .env file.
+# After changing .env, run `docker compose up -d` again.
+# No port is published on your machine.
+
+name: messaging-ch19
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch19-node
+  init: true
+  depends_on:
+    localstack:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+x-environment: &environment
+  AWS_ENDPOINT: http://localstack:4566
+  AWS_REGION: us-east-1
+  AWS_DEFAULT_REGION: us-east-1
+  AWS_ACCESS_KEY_ID: test
+  AWS_SECRET_ACCESS_KEY: test
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+  TOPIC_ARN: arn:aws:sns:us-east-1:000000000000:orders
+
+services:
+  # Local SQS and SNS. The version is pinned to 4.14.0: versions from 2026.03 on
+  # require an access token (free for personal use) to start.
+  localstack:
+    image: localstack/localstack:4.14.0
+    environment:
+      SERVICES: sqs,sns
+    volumes:
+      - ./localstack/create-resources.sh:/etc/localstack/init/ready.d/create-resources.sh:ro
+    healthcheck:
+      test: ["CMD", "bash", "-c", "awslocal sqs get-queue-url --queue-name loyalty"]
+      interval: 3s
+      retries: 40
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Consumes the notifications queue (every order)
+  notifications:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: consumer
+      QUEUE: notifications
+      PROCESSING_MS: ${PROCESSING_MS:-200}
+      EXTEND_VISIBILITY: ${EXTEND_VISIBILITY:-no}
+
+  # Consumes the loyalty queue (only orders of $500 or more, through the SNS filter)
+  loyalty:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: consumer
+      QUEUE: loyalty
+      PROCESSING_MS: 50
+      EXTEND_VISIBILITY: "no"
+
+  # Publishes N orders to the topic and exits: `docker compose run --rm publisher`
+  publisher:
+    <<: *service
+    profiles: ["tools"]
+    environment:
+      <<: *environment
+      SERVICE: publisher
+      N: ${N:-20}
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch19-tools
+    profiles: ["tools"]
+    environment:
+      <<: *environment
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto

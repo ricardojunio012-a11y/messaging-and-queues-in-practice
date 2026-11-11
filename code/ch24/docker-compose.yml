@@ -1,0 +1,14 @@
+# Chapter 24: the decision matrix. Reads matrix.json (mounted from the chapter folder,
+# so you can edit it without rebuilding the image) and shows the ranking.
+#
+#   docker compose run --rm matrix [rank | sensitivity] [scenario]
+#   docker compose run --rm matrix cost [messages per month] [KB per message]
+
+name: messaging-ch24
+
+services:
+  matrix:
+    build: ./node
+    image: pedido-certo/ch24-node
+    volumes:
+      - ./matrix.json:/app/matrix.json:ro

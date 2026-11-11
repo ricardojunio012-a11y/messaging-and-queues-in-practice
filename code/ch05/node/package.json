@@ -1,0 +1,20 @@
+{
+  "name": "pedido-certo-ch05",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "orders-api": "node src/orders-api.ts",
+    "notifications": "node src/notifications.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "amqplib": "^0.10.5",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.6",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0",
+    "@types/pg": "^8.11.10"
+  }
+}

@@ -1,0 +1,89 @@
+# Chapter 22: OrderCreated on NATS JetStream
+#
+# No port is published on your machine.
+
+name: messaging-ch22
+
+x-node: &node
+  build: ./node
+  image: pedido-certo/ch22-node
+  init: true
+  depends_on:
+    nats:
+      condition: service_healthy
+  environment: &environment
+    NATS_URL: nats://nats:4222
+
+services:
+  # A NATS server with JetStream enabled, keeping the streams in /data, and a port
+  # for the kiosks (nats/cloud.conf)
+  nats:
+    image: nats:2.15.1-alpine
+    command: ["-c", "/etc/nats/cloud.conf"]
+    volumes:
+      - data:/data
+      - ./nats:/etc/nats:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-",
+             "http://localhost:8222/healthz?js-enabled-only=true"]
+      interval: 3s
+      retries: 20
+
+  # The kiosk's NATS (step 6): its own JetStream, connected to the cloud as a leaf
+  # node through the default network; the store network is the one inside the
+  # store, which does not go down with the internet
+  kiosk:
+    image: nats:2.15.1-alpine
+    command: ["-c", "/etc/nats/kiosk.conf"]
+    volumes:
+      - kiosk-data:/data
+      - ./nats:/etc/nats:ro
+    networks: [default, store]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-",
+             "http://localhost:8222/healthz?js-enabled-only=true"]
+      interval: 3s
+      retries: 20
+
+  notifications:
+    <<: *node
+    environment:
+      <<: *environment
+      SERVICE: notifications
+      PROCESSING_MS: ${PROCESSING_MS:-0}
+
+  dlq:
+    <<: *node
+    environment:
+      <<: *environment
+      SERVICE: dlq
+
+  # Publishes orders: `docker compose run --rm producer`
+  producer:
+    <<: *node
+    profiles: ["tools"]
+    environment:
+      <<: *environment
+      SERVICE: producer
+      N: ${N:-100}
+      REPEAT: ${REPEAT:-0}
+      DEDUP: ${DEDUP:-1}
+      POISON: ${POISON:-0}
+
+  # `docker compose run --rm tools status` (or replay, kiosk, sync)
+  tools:
+    <<: *node
+    profiles: ["tools"]
+    networks: [default, store]
+    environment:
+      <<: *environment
+      SERVICE: tools
+      KIOSK_URL: nats://kiosk:4222
+
+networks:
+  default:
+  store:
+
+volumes:
+  data:
+  kiosk-data:

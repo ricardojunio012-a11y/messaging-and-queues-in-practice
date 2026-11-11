@@ -1,0 +1,17 @@
+{
+  "name": "pedido-certo-ch23",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.11.0",
+    "amqplib": "^0.10.5"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.6",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

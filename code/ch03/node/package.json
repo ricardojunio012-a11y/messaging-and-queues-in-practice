@@ -1,0 +1,20 @@
+{
+  "name": "pedido-certo-ch03",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "orders-api": "node src/orders-api.ts",
+    "consumer": "node src/consumer.ts",
+    "shipping": "node src/shipping.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.11.0",
+    "amqplib": "^0.10.5"
+  },
+  "devDependencies": {
+    "@types/amqplib": "^0.10.6",
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "connector.class": "io.debezium.connector.postgresql.PostgresConnector",
+  "plugin.name": "pgoutput",
+  "database.hostname": "postgres",
+  "database.port": "5432",
+  "database.user": "debezium",
+  "database.password": "debezium",
+  "database.dbname": "pedidocerto",
+  "topic.prefix": "cdc",
+  "table.include.list": "public.orders",
+  "publication.name": "pub_orders",
+  "publication.autocreate.mode": "disabled",
+  "slot.name": "raw",
+  "snapshot.mode": "initial",
+  "key.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "key.converter.schemas.enable": "false",
+  "value.converter": "org.apache.kafka.connect.json.JsonConverter",
+  "value.converter.schemas.enable": "false"
+}

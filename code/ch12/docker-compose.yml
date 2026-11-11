@@ -1,0 +1,92 @@
+# Chapter 12: Transactional Outbox (and Inbox) with RabbitMQ and PostgreSQL
+#
+# The write mode is chosen in the .env file.
+# After changing .env, run `docker compose up -d --build` again.
+# No port is published on your machine.
+
+name: messaging-ch12
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch12-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+x-environment: &environment
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    hostname: rabbitmq
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      # Tests the AMQP port (see the comment in the chapter 3 lab)
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Writes the order and publishes (dual write) or writes the order and the outbox
+  orders-api:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: orders-api
+      PORT: 8080
+      WRITE: ${WRITE:-dual}
+
+  # Relay: reads the outbox and publishes to RabbitMQ (only has work in outbox mode)
+  relay:
+    <<: *service
+    # If the process goes down, Docker restarts it (as an orchestrator would)
+    restart: on-failure
+    volumes:
+      - counter:/counter
+    environment:
+      <<: *environment
+      SERVICE: relay
+      RELAY_FAIL_AFTER_PUBLISH: ${RELAY_FAIL_AFTER_PUBLISH:-no}
+
+  # Consumer: sends the email for each order, with an inbox (chapter 5)
+  notifications:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: notifications
+
+  # Lab tool: `docker compose run --rm load`
+  load:
+    build: ./load
+    image: pedido-certo/ch12-load
+    profiles: ["tools"]
+    volumes:
+      - counter:/counter
+    environment:
+      N: ${N:-10}
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto
+
+volumes:
+  rabbitmq:
+  counter:

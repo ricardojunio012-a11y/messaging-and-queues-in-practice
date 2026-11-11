@@ -1,0 +1,27 @@
+# Alert rules for the queues. The limits are short for the lab;
+# in production, the chapter suggests 5 minutes for the age of the oldest message.
+groups:
+  - name: queues
+    rules:
+      # The message at the front of the queue has been waiting for more than 60 s.
+      # It depends on the producer filling in the messages' "timestamp" property.
+      - alert: OldMessageInQueue
+        expr: |
+          (time() - rabbitmq_detailed_queue_head_message_timestamp) > 60
+          and rabbitmq_detailed_queue_messages_ready > 0
+        for: 15s
+        labels:
+          severity: page
+        annotations:
+          summary: "Queue {{ $labels.queue }}: the oldest message has been waiting for {{ $value | humanizeDuration }}"
+
+      # Ready messages and no consumer attached to the queue
+      - alert: QueueWithoutConsumer
+        expr: |
+          rabbitmq_detailed_queue_messages_ready > 0
+          and rabbitmq_detailed_queue_consumers == 0
+        for: 30s
+        labels:
+          severity: page
+        annotations:
+          summary: "Queue {{ $labels.queue }} has messages and no consumer"

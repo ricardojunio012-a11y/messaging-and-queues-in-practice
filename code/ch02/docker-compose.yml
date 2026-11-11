@@ -1,0 +1,68 @@
+# Chapter 2: a durable queue in PostgreSQL
+#
+# The consumer's behavior is chosen in the .env file.
+# After changing .env, run `docker compose up -d --build` again.
+# No port is published on your machine: the lab tools run
+# inside the same network as the services.
+
+name: messaging-ch02
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch02-node
+  init: true
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - data:/var/lib/postgresql/data
+    healthcheck:
+      # over TCP: during initialization the temporary server only accepts local connections
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Producer: writes the order and the message in the same transaction
+  orders-api:
+    <<: *service
+    environment:
+      SERVICE: orders-api
+      PORT: 8080
+      DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+
+  # Consumer: takes messages from the "emails" queue and sends the emails
+  notifications:
+    <<: *service
+    environment:
+      SERVICE: notifications
+      DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+      CONSUME_MODE: ${CONSUME_MODE:-status}
+      LEASE_S: ${LEASE_S:-15}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
+      LATENCY_MS: ${LATENCY_MS:-200}
+
+  # Lab tool: `docker compose run --rm load`
+  load:
+    build: ./load
+    image: pedido-certo/ch02-load
+    profiles: ["tools"]
+    environment:
+      N: ${N:-20}
+      C: ${C:-5}
+      MAX_ATTEMPTS: ${MAX_ATTEMPTS:-5}
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto
+
+volumes:
+  data:

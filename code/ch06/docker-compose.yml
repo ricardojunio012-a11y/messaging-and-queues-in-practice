@@ -1,0 +1,105 @@
+# Chapter 6: message ordering with Kafka
+#
+# The behavior of the producer and the consumer is chosen in the .env file.
+# After changing .env, run `docker compose up -d --build` again.
+# No port is published on your machine.
+
+name: messaging-ch06
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch06-node
+  init: true
+  depends_on:
+    kafka-init:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+
+x-environment: &environment
+  KAFKA_BROKERS: kafka:9092
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+
+services:
+  kafka:
+    image: apache/kafka:4.3.2
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      retries: 30
+
+  # Creates the "order-events" topic with 3 partitions and exits
+  kafka-init:
+    image: apache/kafka:4.3.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create
+      --if-not-exists --topic order-events --partitions 3 --replication-factor 1
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Producer: for each order, publishes OrderCreated, OrderPaid and OrderShipped
+  orders-api:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: orders-api
+      PORT: 8080
+      KEY: ${KEY:-random}
+
+  # Consumer: keeps the current status of each order (three instances in the same group)
+  tracking:
+    <<: *service
+    deploy:
+      replicas: 3
+    environment:
+      <<: *environment
+      SERVICE: tracking
+      APP: ${APP:-naive}
+      LATENCY_MAX_MS: ${LATENCY_MAX_MS:-300}
+
+  # Lab tool: `docker compose run --rm load`
+  load:
+    build: ./load
+    image: pedido-certo/ch06-load
+    profiles: ["tools"]
+    environment:
+      N: ${N:-20}
+      C: ${C:-5}
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto
+
+  # Shows the Kafka consumer group: `docker compose run --rm groups`
+  groups:
+    image: apache/kafka:4.3.2
+    profiles: ["tools"]
+    entrypoint: ["/opt/kafka/bin/kafka-consumer-groups.sh", "--bootstrap-server", "kafka:9092",
+                 "--describe"]
+    command: ["--group", "tracking"]

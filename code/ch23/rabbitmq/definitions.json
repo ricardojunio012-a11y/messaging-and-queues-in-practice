@@ -1,0 +1,114 @@
+{
+  "vhosts": [
+    {
+      "name": "store"
+    }
+  ],
+  "users": [
+    {
+      "name": "admin",
+      "password_hash": "uL6h8zlN6qyL4rP2NVVqEK85HoTOVHw5YXbIPwqVEPEMU1Gh",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": [
+        "administrator"
+      ]
+    },
+    {
+      "name": "orders-api",
+      "password_hash": "h6nzGUYvuLubwCYNiEy2cPQqcSwVCtceN37P+xqlMgJixEWA",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    },
+    {
+      "name": "notifications",
+      "password_hash": "lmvl9IIrfUrG4MpMqOZu+WQRXc4o4KTr3dAjd8YtlwzjsbIN",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    },
+    {
+      "name": "marketing",
+      "password_hash": "Z64rJBTbMY/gP4NY1r4MSuz0Sj9ZbVKnqpgtQMfzerJaxLfC",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    }
+  ],
+  "permissions": [
+    {
+      "user": "admin",
+      "vhost": "store",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "orders-api",
+      "vhost": "store",
+      "configure": "^$",
+      "write": "^orders$",
+      "read": "^$"
+    },
+    {
+      "user": "notifications",
+      "vhost": "store",
+      "configure": "^$",
+      "write": "^$",
+      "read": "^notifications$"
+    },
+    {
+      "user": "marketing",
+      "vhost": "store",
+      "configure": "^$",
+      "write": "^$",
+      "read": "^marketing$"
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "orders",
+      "vhost": "store",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "notifications",
+      "vhost": "store",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    },
+    {
+      "name": "marketing",
+      "vhost": "store",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "orders",
+      "vhost": "store",
+      "destination": "notifications",
+      "destination_type": "queue",
+      "routing_key": "order.#",
+      "arguments": {}
+    },
+    {
+      "source": "orders",
+      "vhost": "store",
+      "destination": "marketing",
+      "destination_type": "queue",
+      "routing_key": "order.#",
+      "arguments": {}
+    }
+  ]
+}

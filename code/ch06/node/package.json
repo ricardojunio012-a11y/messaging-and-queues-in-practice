@@ -1,0 +1,19 @@
+{
+  "name": "pedido-certo-ch06",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "orders-api": "node src/orders-api.ts",
+    "tracking": "node src/tracking.ts",
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.11.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.8.0"
+  }
+}

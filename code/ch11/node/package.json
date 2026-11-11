@@ -1,0 +1,19 @@
+{
+  "name": "pedido-certo-ch11",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "notifications": "node src/notifications.ts",
+    "typecheck": "tsc",
+    "test": "node --test test/notifications.test.ts"
+  },
+  "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.11.0",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.8.0"
+  }
+}

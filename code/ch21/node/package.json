@@ -1,0 +1,15 @@
+{
+  "name": "pedido-certo-ch21",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc"
+  },
+  "dependencies": {
+    "@confluentinc/kafka-javascript": "^1.11.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

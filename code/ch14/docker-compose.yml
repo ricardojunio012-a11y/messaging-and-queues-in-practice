@@ -1,0 +1,94 @@
+# Chapter 14: Sagas with RabbitMQ and PostgreSQL
+#
+# The saga style (choreography or orchestration) is chosen in the .env file.
+# After changing .env, run `docker compose up -d` again.
+# No port is published on your machine.
+
+name: messaging-ch14
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch14-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+
+x-environment: &environment
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+  SAGA: ${SAGA:-choreography}
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    hostname: rabbitmq
+    healthcheck:
+      # Tests the AMQP port (see the comment in the chapter 3 lab)
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  # A single database, with the tables of every service, so the tool can see
+  # everything. In production, each service would have its own database.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Receives the order and publishes order.created
+  orders-api:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: orders-api
+      PORT: 8080
+
+  # Choreography: follows the saga's outcome. Orchestration: it is the orchestrator.
+  orders:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: orders
+      SAGA_TIMEOUT_S: ${SAGA_TIMEOUT_S:-15}
+      # Step 6: pause before writing the payment step's advance (slow orchestrator)
+      ORCHESTRATOR_PAUSE_MS: ${ORCHESTRATOR_PAUSE_MS:-0}
+
+  payments:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: payments
+
+  inventory:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: inventory
+
+  shipping:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: shipping
+
+  # Lab tool: `docker compose run --rm load <command>`
+  load:
+    build: ./load
+    image: pedido-certo/ch14-load
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto

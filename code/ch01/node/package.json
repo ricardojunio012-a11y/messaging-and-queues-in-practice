@@ -1,0 +1,14 @@
+{
+  "name": "pedido-certo-ch01",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "orders-api": "node src/orders-api.ts",
+    "notifications": "node src/notifications.ts",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.8.0"
+  }
+}

@@ -1,0 +1,113 @@
+# Chapter 11: contracts and schema evolution with Kafka and Schema Registry
+#
+# The consumer's behavior is chosen in the .env file.
+# After changing .env, run `docker compose up -d --build` again.
+# No port is published on your machine.
+
+name: messaging-ch11
+
+services:
+  kafka:
+    image: apache/kafka:4.3.2
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      retries: 30
+
+  # Creates the "orders" topic and exits
+  kafka-init:
+    image: apache/kafka:4.3.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create
+      --if-not-exists --topic orders --partitions 1 --replication-factor 1
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Schema registry: keeps the versions of the contract and checks compatibility
+  schema-registry:
+    image: confluentinc/cp-schema-registry:8.0.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8081/subjects"]
+      interval: 5s
+      retries: 30
+
+  # Consumer: sends the confirmation email for each OrderCreated
+  notifications:
+    build: ./node
+    image: pedido-certo/ch11-node
+    init: true
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVICE: notifications
+      KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+      CONSUMER_SCHEMA: ${CONSUMER_SCHEMA:-}
+    volumes:
+      - ./tools/schemas:/schemas:ro
+
+  # Automated tests of the consumer: `docker compose run --rm tests`
+  tests:
+    build: ./node
+    image: pedido-certo/ch11-tests
+    profiles: ["tools"]
+    depends_on:
+      kafka-init:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+    command: ["node", "--disable-warning=ExperimentalWarning", "--test", "--test-reporter=spec",
+              "test/notifications.test.ts"]
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch11-tools
+    profiles: ["tools"]
+    depends_on:
+      schema-registry:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto

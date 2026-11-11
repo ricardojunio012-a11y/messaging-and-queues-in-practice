@@ -1,0 +1,99 @@
+# Chapter 17: PostgreSQL and Redis as a queue, compared with RabbitMQ
+#
+# The queue in use and the Redis persistence are chosen in the .env file.
+# After changing .env, run `docker compose up -d` again.
+# No port is published on your machine.
+
+name: messaging-ch17
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch17-node
+  init: true
+  depends_on:
+    rabbitmq:
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+x-environment: &environment
+  BACKEND: ${BACKEND:-postgres}
+  RABBITMQ_URL: amqp://guest:guest@rabbitmq:5672
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+  REDIS_URL: redis://redis:6379
+
+services:
+  rabbitmq:
+    image: rabbitmq:4.3.7-management
+    hostname: rabbitmq
+    volumes:
+      - rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      # Tests the AMQP port (see the comment in the chapter 3 lab)
+      test: ["CMD", "bash", "-c", "echo > /dev/tcp/localhost/5672"]
+      interval: 3s
+      retries: 30
+
+  # The database holds the queue (job_queue table) and, for all three backends,
+  # the result of the jobs
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Redis 8. REDIS_AOF=no keeps only the default RDB snapshots; REDIS_AOF=yes turns on
+  # the append-only file (AOF), with fsync every second.
+  redis:
+    image: redis:8.8.3-alpine
+    command: ["redis-server", "--appendonly", "${REDIS_AOF:-no}",
+              "--appendfsync", "everysec"]
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      retries: 20
+
+  # Consumes the jobs from the queue chosen in BACKEND.
+  # Two instances: `--scale worker=2`
+  worker:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: worker
+
+  # Enqueues N jobs in the chosen queue and exits: `docker compose run --rm producer`
+  producer:
+    <<: *service
+    profiles: ["tools"]
+    environment:
+      <<: *environment
+      SERVICE: producer
+      N: ${N:-20000}
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch17-tools
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto
+
+volumes:
+  rabbitmq:
+  postgres:
+  redis:

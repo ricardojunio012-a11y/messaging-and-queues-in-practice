@@ -1,0 +1,94 @@
+# Chapter 15: Event Sourcing and CQRS with PostgreSQL and Kafka
+#
+# Snapshots are chosen in the .env file.
+# After changing .env, run `docker compose up -d` again.
+# No port is published on your machine.
+
+name: messaging-ch15
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch15-node
+  init: true
+  depends_on:
+    kafka-init:
+      condition: service_completed_successfully
+    postgres:
+      condition: service_healthy
+
+x-environment: &environment
+  KAFKA_BROKERS: kafka:9092
+  DATABASE_URL: postgresql://pedidocerto:pedidocerto@postgres:5432/pedidocerto
+
+services:
+  kafka:
+    image: apache/kafka:4.3.2
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      retries: 30
+
+  # Creates the loyalty events topic, with no retention limit, and exits
+  kafka-init:
+    image: apache/kafka:4.3.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    command: >
+      /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create
+      --if-not-exists --topic loyalty-events --partitions 3 --replication-factor 1
+      --config retention.ms=-1
+
+  # The event store (write side) and the projections (read side), in the same
+  # database so the tool can see both; in production, they could be separate.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pedidocerto
+      POSTGRES_PASSWORD: pedidocerto
+      POSTGRES_DB: pedidocerto
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "pedidocerto"]
+      interval: 2s
+      retries: 20
+
+  # Commands (earn, redeem) write events; queries read the projection
+  loyalty-api:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: loyalty-api
+      PORT: 8080
+      SNAPSHOT_EVERY: ${SNAPSHOT_EVERY:-0}
+
+  # Reads the events from Kafka and keeps the read tables (balances and statement)
+  projections:
+    <<: *service
+    environment:
+      <<: *environment
+      SERVICE: projections
+
+  # Lab tool: `docker compose run --rm tools <command>`
+  tools:
+    build: ./tools
+    image: pedido-certo/ch15-tools
+    profiles: ["tools"]
+    environment:
+      PGHOST: postgres
+      PGUSER: pedidocerto
+      PGPASSWORD: pedidocerto
+      PGDATABASE: pedidocerto

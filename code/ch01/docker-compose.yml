@@ -1,0 +1,46 @@
+# Chapter 1: when the direct call breaks
+#
+# The behavior of the services is chosen in the .env file.
+# After changing .env, run `docker compose up -d --build` again.
+
+name: messaging-ch01
+
+x-service: &service
+  build: ./node
+  image: pedido-certo/ch01-node
+  init: true
+
+services:
+  orders-api:
+    <<: *service
+    environment:
+      SERVICE: orders-api
+      PORT: 8080
+      NOTIFICATIONS_URL: http://notifications:8081
+      MODE: ${MODE:-direct}
+      TIMEOUT_MS: ${TIMEOUT_MS:-1000}
+      ATTEMPTS: ${ATTEMPTS:-3}
+    ports:
+      - "8080:8080"
+    depends_on:
+      - notifications
+
+  notifications:
+    <<: *service
+    environment:
+      SERVICE: notifications
+      PORT: 8081
+      LATENCY_MS: ${LATENCY_MS:-0}
+    ports:
+      - "8081:8081"
+
+  # Lab tool: `docker compose run --rm load`
+  load:
+    image: curlimages/curl:8.11.1
+    profiles: ["tools"]
+    entrypoint: ["sh", "/load.sh"]
+    volumes:
+      - ./load/load.sh:/load.sh:ro
+    environment:
+      N: ${N:-20}
+      C: ${C:-5}

@@ -1,0 +1,8 @@
+node_modules/
+saida/
+output/
+dist/
+target/
+vendor/
+__pycache__/
+.pytest_cache/

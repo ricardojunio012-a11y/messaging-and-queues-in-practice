@@ -1,0 +1,87 @@
+{
+  "options": ["PostgreSQL", "Redis", "RabbitMQ", "Kafka", "SQS and SNS",
+              "NATS JetStream"],
+  "criteria": {
+    "durability": {
+      "description": "not losing what was confirmed",
+      "evidence": "ch. 17 (Redis without AOF), 18 (quorum queues), 20 (acks and ISR)",
+      "scores": [5, 2, 5, 5, 5, 4]
+    },
+    "replay": {
+      "description": "reread old events with a new consumer",
+      "evidence": "ch. 8 (replay in Kafka), 22 (limits retention in JetStream)",
+      "scores": [2, 2, 3, 5, 1, 4]
+    },
+    "ordering": {
+      "description": "per-key ordering with several consumers",
+      "evidence": "ch. 6 (partitions and keys; SQS FIFO groups)",
+      "scores": [2, 2, 3, 5, 4, 3]
+    },
+    "routing": {
+      "description": "route by type or content without new code",
+      "evidence": "ch. 3 (exchanges), 19 (SNS filters), 22 (NATS subjects)",
+      "scores": [1, 1, 5, 2, 4, 4]
+    },
+    "throughput": {
+      "description": "messages per second on an ordinary machine",
+      "evidence": "ch. 9 and 17 (scaling and queue labs)",
+      "scores": [2, 4, 3, 5, 4, 4]
+    },
+    "jobs": {
+      "description": "delay, retries and DLQ ready to use",
+      "evidence": "ch. 7 (DLQ), 16 (delayed messages), 17 (job libraries)",
+      "scores": [4, 4, 4, 1, 4, 3]
+    },
+    "operations": {
+      "description": "simplicity of operation (5 = simplest)",
+      "evidence": "ch. 18 and 20 (clusters), 19 (managed service)",
+      "scores": [5, 4, 3, 2, 5, 4]
+    },
+    "infrastructure": {
+      "description": "new infrastructure needed (5 = none)",
+      "evidence": "Pedido Certo already runs PostgreSQL and Redis, on AWS",
+      "scores": [5, 5, 2, 1, 4, 2]
+    }
+  },
+  "scenarios": {
+    "jobs": {
+      "description": "Pedido Certo's email and invoice queue",
+      "weights": { "durability": 3, "jobs": 3, "operations": 3, "infrastructure": 3,
+                   "throughput": 1 },
+      "eliminatory": { "durability": 4 }
+    },
+    "events": {
+      "description": "order events for several consumers, with replay",
+      "weights": { "durability": 3, "replay": 3, "ordering": 3, "throughput": 2,
+                   "operations": 1, "infrastructure": 1 },
+      "eliminatory": { "durability": 4, "replay": 4 }
+    },
+    "integration": {
+      "description": "integration with partners, routed by event type",
+      "weights": { "routing": 3, "durability": 2, "operations": 2, "jobs": 2,
+                   "infrastructure": 1 },
+      "eliminatory": { "durability": 4 }
+    }
+  },
+  "cost": {
+    "source": "public AWS prices in us-east-1, checked on October 26, 2026",
+    "hours_per_month": 730,
+    "team_hourly_rate": 27,
+    "sqs": {
+      "tiers": [[100000000000, 0.40], [200000000000, 0.30], [null, 0.24]],
+      "free": 1000000,
+      "requests_per_message": 3,
+      "chunk_kb": 64,
+      "team_hours": 2
+    },
+    "msk": {
+      "brokers": 3,
+      "broker_hour": 0.204,
+      "disk_gb_month": 0.10,
+      "retention_days": 7,
+      "replication": 3,
+      "cross_zone_gb": 0.02,
+      "team_hours": 10
+    }
+  }
+}
